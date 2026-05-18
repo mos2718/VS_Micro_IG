@@ -1,0 +1,5 @@
+id,code,code_display,value_unit,value_code
+body-temperature,8310-5,Body temperature,degC,Cel
+heart-rate,8867-4,Heart rate,/min,/min
+respiratory-rate,9279-1,Respiratory rate,/min,/min
+spo2,59408-5,Oxygen saturation in Arterial blood by Pulse oximetry,%,%
