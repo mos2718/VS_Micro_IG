@@ -1,6 +1,6 @@
 {
   "resourceType": "Observation",
-  "status": "status",
+  "status": "final",
   "category": [
     {"coding": [
         { "system": "http://terminology.hl7.org/CodeSystem/observation-category",
