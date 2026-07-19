@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FHIR 體溫監測歷史調閱</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+            background-color: #f8f9fa;
+            color: #333;
+            padding: 30px;
+            display: flex;
+            justify-content: center;
+        }
+        .container {
+            background: #ffffff;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            max-width: 750px;
+            width: 100%;
+        }
+        h2 {
+            margin-top: 0;
+            color: #2c3e50;
+            border-bottom: 2px solid #e9ecef;
+            padding-bottom: 10px;
+        }
+        .info-panel {
+            background-color: #f1f3f5;
+            padding: 12px;
+            font-size: 0.85em;
+            color: #495057;
+            margin-bottom: 20px;
+            border-radius: 6px;
+            line-height: 1.5;
+        }
+        button {
+            width: 100%;
+            padding: 14px;
+            background-color: #2980b9;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 1.1em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background 0.2s;
+            margin-bottom: 20px;
+        }
+        button:hover { background-color: #1f618d; }
+        button:disabled { background-color: #ced4da; cursor: not-allowed; }
+        
+        .status-box {
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            display: none;
+            font-size: 0.95em;
+        }
+        .loading { background-color: #d5f5e3; color: #1e8449; }
+        .error { background-color: #fadbd8; color: #943126; }
+        
+        /* 表格樣式 */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            display: none;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #dee2e6;
+        }
+        th {
+            background-color: #34495e;
+            color: #ffffff;
+            font-weight: 600;
+        }
+        tr:hover { background-color: #f2f4f4; }
+        .badge {
+            font-weight: bold;
+            color: #2c3e50;
+            background-color: #eaeded;
+            padding: 3px 8px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h2>生理監測資料調閱 (體溫)</h2>
+    
+    <div class="info-panel">
+        <strong>FHIR Server Base:</strong> <code>https://hapi.fhir.org/baseR4</code><br>
+        <strong>Patient ID:</strong> <code>6c97e61f-f043-4332-815b-efb9f0e3d27d</code>
+    </div>
+
+    <button id="fetchBtn" onclick="getFhirtemperatureData()">從 FHIR 伺服器調閱資料</button>
+
+    <div id="statusBox" class="status-box"></div>
+
+    <table id="dataTable">
+        <thead>
+            <tr>
+                <th>量測項目</th>
+                <th>產生時間 (本地時間)</th>
+                <th>數值</th>
+                <th>單位</th>
+            </tr>
+        </thead>
+        <tbody id="dataBody">
+            <!-- 資料會由 JavaScript 解析後動態填入 -->
+        </tbody>
+    </table>
+</div>
+
+<script>
+async function getFhirtemperatureData() {
+    const fetchBtn = document.getElementById('fetchBtn');
+    const statusBox = document.getElementById('statusBox');
+    const dataTable = document.getElementById('dataTable');
+    const dataBody = document.getElementById('dataBody');
+
+    // 初始化狀態
+    fetchBtn.disabled = true;
+    fetchBtn.innerText = '正在調閱中...';
+    statusBox.style.display = 'block';
+    statusBox.className = 'status-box loading';
+    statusBox.innerText = '正在向 FHIR 伺服器讀取最新生命徵象紀錄...';
+    dataTable.style.display = 'none';
+    dataBody.innerHTML = '';
+
+    const serverBase = 'https://hapi.fhir.org/baseR4';
+    const patientId = '6c97e61f-f043-4332-815b-efb9f0e3d27d';
+    const temperatureCode = 'http://loinc.org|8310-5';
+
+    // 建立 FHIR 查詢網址 (限制抓取最新 50 筆，並按時間倒序排序)
+    const searchUrl = `${serverBase}/Observation?subject=Patient/${patientId}&code=${temperatureCode}&_sort=-date&_count=50`;
+
+    try {
+        const response = await fetch(searchUrl, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/fhir+json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`伺服器連線失敗 (錯誤碼: ${response.status})`);
+        }
+
+        const bundle = await response.json();
+
+        // 驗證是否有資料存在
+        if (!bundle.entry || bundle.entry.length === 0) {
+            statusBox.className = 'status-box error';
+            statusBox.innerText = '📭 查無此病人的體溫生理監測歷史紀錄。';
+            return;
+        }
+
+        // 解析 Bundle 中的每一筆 Observation 資源
+        let validRowsCount = 0;
+        bundle.entry.forEach(item => {
+            const resource = item.resource;
+            
+            // 安全防護：確認包含數值結構再進行畫面繪製
+            if (resource && resource.valueQuantity) {
+                validRowsCount++;
+
+                // 欄位 1: 量測項目 (優先讀取顯示文字，若無則顯示 LOINC Code)
+                const itemName = resource.code.text || (resource.code.coding && resource.code.coding[0] ? resource.code.coding[0].display : "Body temperature");
+
+                // 欄位 2: 產生時間 (將 FHIR 標準 UTC 時間轉換為本機易讀時間)
+                let displayTime = '未提供時間';
+                if (resource.effectiveDateTime) {
+                    const localDate = new Date(resource.effectiveDateTime);
+                    displayTime = localDate.toLocaleString('zh-TW', { hour12: false });
+                }
+
+                // 欄位 3: 數值
+                const numValue = resource.valueQuantity.value;
+
+                // 欄位 4: 單位 (如果上傳時 code 是 [degF] 或 Cel，這裡會動態抓取對應的展示單位文字)
+                let unitName = resource.valueQuantity.unit || resource.valueQuantity.code || '';
+                // 將常見標準 UCUM 代碼轉換為更親民的網頁符號
+                if (unitName === 'Cel') unitName = '°C';
+                if (unitName === '[degF]' || unitName === 'degF') unitName = '°F';
+
+                // 動態組裝 HTML 表格列 (td)
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><strong>${itemName}</strong></td>
+                    <td>${displayTime}</td>
+                    <td><span class="badge">${numValue}</span></td>
+                    <td>${unitName}</td>
+                `;
+                dataBody.appendChild(tr);
+            }
+        });
+
+        if (validRowsCount === 0) {
+            statusBox.className = 'status-box error';
+            statusBox.innerText = '查得相關資源，但其內部的 Quantity 資料結構無法正確解析。';
+        } else {
+            statusBox.style.display = 'none'; // 隱藏狀態盒
+            dataTable.style.display = 'table'; // 展開表格呈現
+        }
+
+    } catch (error) {
+        statusBox.className = 'status-box error';
+        statusBox.innerText = `❌ 資料調閱發生錯誤: ${error.message}`;
+    } finally {
+        fetchBtn.disabled = false;
+        fetchBtn.innerText = '從 FHIR 伺服器調閱資料';
+    }
+}
+</script>
+
+</body>
+</html>
