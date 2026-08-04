@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>5 Times Sit-to-Stand 活動能力紀錄列表</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 900px;
+            margin: 30px auto;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+        .card {
+            background-color: #fff;
+            border-radius: 8px;
+            padding: 25px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 10px;
+        }
+        h2 {
+            margin: 0;
+            color: #333;
+        }
+        .patient-info {
+            color: #666;
+            font-size: 14px;
+        }
+        .btn-refresh {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .btn-refresh:hover {
+            background-color: #0056b3;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+            background-color: #fff;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 12px;
+            text-align: left;
+            vertical-align: top;
+        }
+        th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+            color: #333;
+        }
+        tr:nth-child(even) {
+            background-color: #fafafa;
+        }
+        .duration-val {
+            font-weight: bold;
+            color: #007bff;
+        }
+        .status-loading {
+            text-align: center;
+            color: #666;
+            padding: 20px;
+        }
+        .status-error {
+            text-align: center;
+            color: #dc3545;
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="card">
+        <div class="header">
+            <div>
+                <h2>5 Times Sit-to-Stand 活動能力紀錄表</h2>
+                <div class="patient-info">Patient ID: <strong>137289680</strong> | FHIR Server: <code>https://hapi.fhir.org/baseR4</code></div>
+            </div>
+            <button type="button" class="btn-refresh" onclick="fetchFHIRRecords()">重新整理表格</button>
+        </div>
+
+        <table>
+            <thead>
+                <tr>
+                    <th style="width: 25%;">量測時間 (Date & Time)</th>
+                    <th style="width: 20%;">測試耗時 (秒)</th>
+                    <th style="width: 35%;">備註 / 註解 (Note)</th>
+                    <th style="width: 20%;">FHIR Resource ID</th>
+                </tr>
+            </thead>
+            <tbody id="recordsTableBody">
+                <tr>
+                    <td colspan="4" class="status-loading">正在連線至 FHIR 伺服器載入資料...</td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        const serverUrl = "https://hapi.fhir.org/baseR4";
+        const patientId = "137289680";
+
+        async function fetchFHIRRecords() {
+            const tbody = document.getElementById("recordsTableBody");
+            
+            tbody.innerHTML = `<tr><td colspan="4" class="status-loading">載入最新資料中...</td></tr>`;
+
+            try {
+                // 向 FHIR 伺服器查詢 Patient 137289680 與 LOINC Code 72088-8，按時間倒序排列
+                const queryUrl = `${serverUrl}/Observation?subject=Patient/${patientId}&code=http://loinc.org|72088-8&_sort=-date`;
+                const response = await fetch(queryUrl);
+
+                if (!response.ok) {
+                    throw new Error(`HTTP 錯誤 ${response.status}`);
+                }
+
+                const bundle = await response.json();
+                tbody.innerHTML = ""; // 清空表格內容
+
+                // 檢查是否有資料
+                if (!bundle.entry || bundle.entry.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="4" style="text-align: center; color: #888; padding: 20px;">目前尚無活動能力紀錄資料</td></tr>`;
+                    return;
+                }
+
+                // 走訪並解析 Bundle 內的 Observation 資源
+                bundle.entry.forEach(entry => {
+                    const obs = entry.resource;
+
+                    // 1. 解析量測時間
+                    const rawDate = obs.effectiveDateTime || obs.issued;
+                    const formattedDate = rawDate ? new Date(rawDate).toLocaleString('zh-TW', { hour12: false }) : "未提供";
+
+                    // 2. 解析數值與單位
+                    let valDisplay = "無紀錄";
+                    if (obs.valueQuantity && obs.valueQuantity.value !== undefined) {
+                        const val = obs.valueQuantity.value;
+                        const unit = obs.valueQuantity.unit || "s";
+                        valDisplay = `<span class="duration-val">${val}</span> ${unit}`;
+                    }
+
+                    // 3. 解析註解 (note)
+                    let noteText = "-";
+                    if (obs.note && obs.note.length > 0) {
+                        noteText = obs.note.map(n => n.text).join("<br>");
+                    }
+
+                    // 建立表格列
+                    const tr = document.createElement("tr");
+                    tr.innerHTML = `
+                        <td>${formattedDate}</td>
+                        <td>${valDisplay}</td>
+                        <td>${noteText}</td>
+                        <td><code>${obs.id}</code></td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+
+            } catch (err) {
+                tbody.innerHTML = `<tr><td colspan="4" class="status-error">載入資料失敗：${err.message}</td></tr>`;
+            }
+        }
+
+        // 頁面載入完成後自動抓取資料
+        window.onload = fetchFHIRRecords;
+    </script>
+</body>
+</html>
